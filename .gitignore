@@ -1,0 +1,7 @@
+# Reference compiler and verification output (source remains unchanged).
+Reference-FocusTimer-SourceCode/Studytime.exe
+Reference-FocusTimer-SourceCode/Studytime.Tests.exe
+Reference-FocusTimer-SourceCode/*.pdb
+.test-artifacts/
+.artifacts/
+node_modules/

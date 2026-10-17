@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focus-timer.invalid/protocol/v1/schemas/operation.schema.json",
+  "title": "Focus Timer immutable operation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "opId", "datasetId", "deviceId", "entityType", "entityId", "operation", "lamportCounter"],
+  "properties": {
+    "protocolVersion": { "type": "integer", "const": 1 },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "opId": { "$ref": "focus-session.schema.json#/$defs/uuid" },
+    "datasetId": { "$ref": "focus-session.schema.json#/$defs/uuid" },
+    "deviceId": { "$ref": "focus-session.schema.json#/$defs/uuid" },
+    "entityType": { "type": "string", "const": "focusSession" },
+    "entityId": { "$ref": "focus-session.schema.json#/$defs/uuid" },
+    "operation": { "type": "string", "enum": ["UPSERT", "DELETE"] },
+    "lamportCounter": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "payload": { "$ref": "focus-session.schema.json" }
+  },
+  "allOf": [{
+    "if": { "properties": { "operation": { "const": "UPSERT" } }, "required": ["operation"] },
+    "then": { "required": ["payload"] },
+    "else": { "not": { "required": ["payload"] } }
+  }],
+  "$comment": "Additionally require payload.id==entityId; all integer tokens must be unsigned decimal without fraction/exponent; strict wire checks precede this parsed shape."
+}

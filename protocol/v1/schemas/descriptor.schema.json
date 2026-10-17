@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focus-timer.invalid/protocol/v1/schemas/descriptor.schema.json",
+  "title": "Focus Timer dataset descriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["application", "protocolVersion", "datasetId"],
+  "properties": {
+    "application": { "type": "string", "const": "focus-timer" },
+    "protocolVersion": { "type": "integer", "const": 1 },
+    "datasetId": { "$ref": "focus-session.schema.json#/$defs/uuid" }
+  },
+  "$comment": "Closed parsed shape only. Enforce exact wire profile and 1048576-byte/depth limits; unknown protocol/fields are unsupported, other wrong values malformed."
+}

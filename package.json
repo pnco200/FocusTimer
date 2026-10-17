@@ -1,0 +1,14 @@
+{
+  "name": "focus-timer-protocol-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable Focus Timer Sync Protocol v1 reference core and deterministic simulation",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test",
+    "test:protocol": "node --test test/protocol.test.js test/protocol-review.test.js test/conformance.test.js test/standalone-resource-policy.test.js",
+    "test:simulation": "node --test test/simulation.test.js test/simulation-review.test.js test/simulation-final-review.test.js test/simulation-resources.test.js test/sync-coverage-regressions.test.js test/snapshot-segment-regressions.test.js",
+    "test:reference": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-reference.ps1"
+  }
+}
