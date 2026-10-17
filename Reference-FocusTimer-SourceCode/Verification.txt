@@ -1,0 +1,33 @@
+PASS  Initial state is idle and empty
+PASS  Paused time is excluded across multiple resumes
+PASS  Repeated start and pause are idempotent
+PASS  Finish while running saves exactly one titled session
+PASS  Finishing a paused session excludes the subsequent break
+PASS  Blank titles receive a useful default
+PASS  A zero-length session cannot be finalized
+PASS  Reset retains the title and existing history
+PASS  Closing pauses and restores without adding offline time
+PASS  Crash recovery restores the last checkpoint paused
+PASS  Checkpoint disk latency does not lose running study time
+PASS  Failed finish retains the active session and adds no record
+PASS  Failed pause and reset preserve the in-memory stopwatch
+PASS  Titles enforce their length limit
+PASS  Deleting a session preserves other sessions
+PASS  Durations do not wrap after 24 hours
+PASS  CSV safely quotes titles and prevents spreadsheet formulas
+PASS  Atomic JSON storage persists Unicode titles and history
+PASS  Corrupt data recovers a valid backup and preserves evidence
+PASS  Unreadable data without a backup is never overwritten
+PASS  Duplicate saved session IDs are rejected
+PASS  Native buttons finish, reset, navigate and filter real sessions
+PASS  Existing version 1 records load with always-on-top disabled
+PASS  Pin preference survives restart, checkpoints, finish and reset
+PASS  A failed pin preference save preserves the timer and old setting
+PASS  Native topmost flag toggles and compact resizing preserves controls
+PASS  Dark preference persists through pinning, finishing and reopening
+PASS  A failed dark-mode save preserves the existing preference and time
+PASS  Native theme toggle and keyboard shortcut preserve sessions and pinning
+PASS  Dark palette keeps text and primary buttons readable
+PASS  Dark history scrollbar scrolls records and preserves position on theme change
+
+31/31 tests passed.
