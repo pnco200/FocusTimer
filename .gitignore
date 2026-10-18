@@ -5,3 +5,6 @@ Reference-FocusTimer-SourceCode/*.pdb
 .test-artifacts/
 .artifacts/
 node_modules/
+dist/
+test-results/
+playwright-report/

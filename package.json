@@ -1,14 +1,37 @@
 {
-  "name": "focus-timer-protocol-core",
-  "version": "0.1.0",
+  "name": "focus-timer",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Portable Focus Timer Sync Protocol v1 reference core and deterministic simulation",
-  "engines": { "node": ">=22" },
+  "description": "Local-first Focus Timer web app and portable Sync Protocol v1 core",
+  "engines": {
+    "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
+  },
   "scripts": {
-    "test": "node --test",
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "npm run test:core && npm run test:web",
+    "test:core": "node --test test/*.test.js",
+    "test:web": "vitest run",
+    "test:async-runner": "vitest run web-test/async-runner",
+    "test:browser": "playwright test",
     "test:protocol": "node --test test/protocol.test.js test/protocol-review.test.js test/conformance.test.js test/standalone-resource-policy.test.js",
     "test:simulation": "node --test test/simulation.test.js test/simulation-review.test.js test/simulation-final-review.test.js test/simulation-resources.test.js test/sync-coverage-regressions.test.js test/snapshot-segment-regressions.test.js",
     "test:reference": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-reference.ps1"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "fake-indexeddb": "^6.2.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^5.0.5"
   }
 }

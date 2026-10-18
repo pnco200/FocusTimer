@@ -1,26 +1,33 @@
 import {
-  MAX_COUNTER, MAX_OPERATIONS, MAX_SEGMENT_BYTES, authorDescription, encodeUtf8,
+  MAX_COUNTER, MAX_OPERATIONS, MAX_SEGMENT_BYTES,
   operationEqual, parseSegment, reduceOperations, validateDescriptor,
   validateOperation, validateSession,
 } from '../protocol/index.js';
+import { authoredSession, editedSession, localOperation as prepareLocalOperation } from '../sync/local.js';
+import {
+  RemoteError, sameBytes, samePin, makeReservation, sealedBytes,
+  coveragePending, remoteStatus, validateConfirmation, validateBindingTarget,
+} from '../sync/remote.js';
 
 const clone = value => structuredClone(value);
-const sameBytes = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
-const samePin = (a, b) => a && b && a.generation === b.generation
-  && a.account === b.account && a.locator === b.locator && a.datasetId === b.datasetId;
-const sameDestination = (a, b) => a && b && a.account === b.account
-  && a.locator === b.locator && a.datasetId === b.datasetId;
 const own = (object, key) => Object.hasOwn(object, key);
 const getOwn = (object, key) => own(object, key) ? object[key] : undefined;
 const putOwn = (object, key, value) => Object.defineProperty(object, key,
   { value, writable: true, enumerable: true, configurable: true });
 
-export class SimulationError extends Error {
+export class SimulationError extends RemoteError {
   constructor(code, message = code) {
-    super(message);
+    super(code, message);
     this.name = 'SimulationError';
-    this.code = code;
-    this.classification = ['malformed', 'unsupported', 'integrity'].includes(code) ? code : undefined;
+  }
+}
+
+// Preserve the deterministic repository's public error type while sharing decisions.
+function remoteDecision(work) {
+  try { return work(); }
+  catch (error) {
+    if (error instanceof RemoteError) throw new SimulationError(error.code, error.message);
+    throw error;
   }
 }
 
@@ -108,9 +115,7 @@ function currentWinner(state, entityId) {
 }
 
 function authoredPayload(value) {
-  const validated = validateSession(value); // Validate input before trimming the 120-scalar bound.
-  validated.description = authorDescription(validated.description);
-  return validated;
+  return authoredSession(value);
 }
 
 function assertFreshEntity(state, entityId) {
@@ -125,11 +130,8 @@ function assertCommandId(command) {
 
 function localOperation(state, { entityId, operation, payload, opId }, step) {
   if (state.highWater === MAX_COUNTER) throw new SimulationError('counter-exhausted');
-  const value = validateOperation({
-    protocolVersion: 1, schemaVersion: 1, datasetId: state.descriptor.datasetId,
-    deviceId: state.writerId, opId, entityType: 'focusSession', entityId, operation,
-    lamportCounter: state.highWater + 1, ...(operation === 'UPSERT' ? { payload } : {}),
-  });
+  const value = prepareLocalOperation({ descriptor: state.descriptor, writerId: state.writerId,
+    highWater: state.highWater, opId, entityId, operation, payload });
   if (own(state.operations, opId)) throw new SimulationError('integrity', 'A newly authored opId already exists');
   state.operations[opId] = value;
   step('operation');
@@ -157,10 +159,7 @@ function assertActive(state, command) {
 function discovery(state) { return state.discoveries[state.binding.generation]; }
 
 function publicationCoveragePending(state) {
-  const artifacts = discovery(state).artifacts;
-  return Object.values(state.publications).some(publication => publication.state === 'acknowledged'
-    && (!publication.remoteReferences?.length || publication.remoteReferences.some(reference =>
-      getOwn(artifacts, reference)?.segmentId !== publication.segmentId)));
+  return coveragePending(state.publications, discovery(state).artifacts);
 }
 
 /** One dataset replica. All exposed snapshots, publications and byte arrays are defensive copies. */
@@ -193,21 +192,13 @@ export class TransactionalRepository {
     const validated = validateDescriptor(descriptor);
     if (typeof account !== 'string' || !account || typeof locator !== 'string' || !locator) throw new SimulationError('invalid-binding');
     return this.store.transaction('bind', (state, step) => {
-      requireGeneration(state, expectedGeneration);
-      if (state.active) throw new SimulationError('active-not-idle');
-      if (validated.datasetId !== state.descriptor.datasetId) throw new SimulationError('dataset-mismatch');
       const pendingPublications = Object.values(state.publications).filter(publication => publication.state !== 'acknowledged');
-      if (pendingPublications.length && (!resumePublications || pendingPublications.some(publication =>
-        publication.binding.account !== account || publication.binding.locator !== locator
-        || publication.binding.datasetId !== validated.datasetId))) {
-        throw new SimulationError('pending-publication-rebind-required', 'Explicitly resume the original target or resolve retained publication intents before rebinding');
-      }
       const established = state.binding ?? state.lastBinding ?? Object.values(state.discoveries).at(-1)?.binding;
       const retainedCorpus = Object.keys(state.operations).length || Object.keys(state.segments).length
         || Object.keys(state.publications).length || Object.values(state.discoveries).some(pass => Object.keys(pass.artifacts).length);
-      if (established && retainedCorpus && !sameDestination(established, { account, locator, datasetId: validated.datasetId })) {
-        throw new SimulationError('destination-transfer-required', 'Retained dataset history requires a deliberate complete-corpus transfer before changing destination');
-      }
+      remoteDecision(() => validateBindingTarget({ generation: state.bindingGeneration, active: !!state.active,
+        datasetId: state.descriptor.datasetId, pendingPublications, established, retainedCorpus },
+      { account, locator, descriptor: validated, expectedGeneration, resumePublications }));
       const previousDiscovery = Object.values(state.discoveries).findLast(pass => pass.binding?.account === account && pass.binding?.locator === locator);
       state.bindingGeneration += 1;
       state.binding = { account, locator, datasetId: validated.datasetId, generation: state.bindingGeneration };
@@ -404,14 +395,15 @@ export class TransactionalRepository {
   recoverySnapshot(datasetId) { return this.snapshot().recoveryCollections[datasetId]; }
 
   edit(command) {
-    const payload = validateSession(command.payload);
+    let payload = validateSession(command.payload);
     if (payload.id !== command.entityId) throw new SimulationError('malformed', 'Edited entity identity changed');
     return this.store.transaction('edit', (state, step) => {
       requireGeneration(state, command.expectedBindingGeneration);
       const winner = currentWinner(state, command.entityId);
       if (!winner || winner.opId !== command.baseOpId) throw new SimulationError('stale-editor');
-      if (payload.description !== winner.payload.description) payload.description = authorDescription(payload.description);
-      if (JSON.stringify(winner.payload) === JSON.stringify(payload)) return { changed: false, opId: winner.opId };
+      const edit = editedSession(winner.payload, payload);
+      if (!edit.changed) return { changed: false, opId: winner.opId };
+      payload = edit.payload;
       const opId = command.opId ?? this.ids();
       const operation = localOperation(state, { entityId: command.entityId, operation: 'UPSERT', payload, opId }, step);
       return { changed: true, opId: operation.opId };
@@ -438,18 +430,7 @@ export class TransactionalRepository {
       if (!eligible.length) return null;
       const segmentId = assertUuid(this.ids());
       if (own(state.publications, segmentId) || own(state.segments, segmentId)) throw new SimulationError('integrity', 'Segment ID collision');
-      const writerId = state.operations[eligible[0]].deviceId;
-      const operations = [];
-      for (const id of eligible) {
-        if (state.operations[id].deviceId !== writerId) continue;
-        const candidate = [...operations, state.operations[id]];
-        const bytes = encodeUtf8(JSON.stringify({ protocolVersion: 1, datasetId: pin.datasetId, deviceId: writerId, segmentId, operations: candidate }));
-        if (bytes.length > MAX_SEGMENT_BYTES || operations.length === maxOperations) break;
-        operations.push(state.operations[id]);
-      }
-      if (!operations.length) throw new SimulationError('oversized-operation');
-      const publication = { segmentId, datasetId: pin.datasetId, writerId, binding: clone(pin), operations,
-        operationIds: operations.map(op => op.opId), bytes: null, state: 'reserved', attempts: 0 };
+      const publication = remoteDecision(() => makeReservation(pin, segmentId, eligible.map(id => state.operations[id]), maxOperations));
       state.publications[segmentId] = publication;
       step('intent');
       for (const id of publication.operationIds) state.outbox[id].reservation = segmentId;
@@ -464,10 +445,7 @@ export class TransactionalRepository {
       const publication = state.publications[segmentId];
       if (!publication || !samePin(publication.binding, pin)) throw new SimulationError('stale-publication');
       if (publication.state !== 'reserved') return publication;
-      const value = { protocolVersion: 1, datasetId: publication.datasetId, deviceId: publication.writerId,
-        segmentId, operations: publication.operations };
-      const bytes = encodeUtf8(JSON.stringify(value));
-      parseSegment(bytes);
+      const bytes = sealedBytes(publication);
       const accepted = state.segments[segmentId];
       if (accepted && !sameBytes(accepted.bytes, bytes)) {
         throw new SimulationError('integrity', 'Reserved segment identity conflicts with accepted bytes');
@@ -517,16 +495,8 @@ export class TransactionalRepository {
       requirePin(state, pin);
       const publication = state.publications[segmentId];
       if (!publication || !samePin(publication.binding, pin)) throw new SimulationError('stale-publication');
-      if (!['confirmed', 'already-present'].includes(confirmation?.outcome)) throw new SimulationError('unconfirmed-publication');
-      if (publication.state === 'reserved') throw new SimulationError('invalid-publication-state');
-      if (confirmation.segmentId !== segmentId || !(confirmation.bytes instanceof Uint8Array)
-        || !sameBytes(publication.bytes, confirmation.bytes)) throw new SimulationError('integrity', 'Confirmation did not identify the exact sealed publication');
-      const references = confirmation.references ?? [];
-      if (!Array.isArray(references) || references.some(reference => typeof reference !== 'string' || !reference)) {
-        throw new SimulationError('integrity', 'Confirmation contained invalid physical references');
-      }
       const retained = state.segments[segmentId];
-      if (retained && !sameBytes(retained.bytes, publication.bytes)) throw new SimulationError('integrity', 'Confirmed segment conflicts with accepted bytes');
+      const references = remoteDecision(() => validateConfirmation(publication, confirmation, retained));
       const pass = discovery(state);
       for (const reference of references) {
         const artifact = getOwn(pass.artifacts, reference) ?? { reference, originalBytes: null, segmentId: null };
@@ -740,18 +710,7 @@ export class TransactionalRepository {
 
   status() {
     const state = this.snapshot();
-    if (state.highWater === MAX_COUNTER) return 'Recovery required';
-    if (!state.binding) return 'Local only';
-    if (state.blocked) return state.blocked.classification === 'unsupported' ? 'Unsupported data / Upgrade required' : 'Recovery required';
-    const pass = discovery(state);
-    if (pass.inProgress) return 'Syncing';
-    if (pass.error === 'authorization') return 'Authorization required';
-    if (pass.error) return 'Offline / Retry pending';
-    if (Object.keys(state.outbox).length || Object.values(state.publications).some(value => value.state !== 'acknowledged')
-      || publicationCoveragePending(state)) return 'Changes saved locally / Pending';
-    if (pass.reconciled && pass.enumerationComplete
-      && Object.values(pass.artifacts).every(value => value.state === 'applied' && value.verifiedPass === pass.passId)) return 'Synced';
-    return 'Offline / Retry pending';
+    return remoteStatus({ ...state, pass: state.binding ? discovery(state) : null });
   }
 }
 
