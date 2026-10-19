@@ -1,99 +1,73 @@
 # Google Drive authorization and transport feasibility
 
-Research and experiment preparation: 2026-10-18. Authority: `SPEC.md` §§16–24, 26, 36, 38 and the existing [generic transport](../src/web/sync-transport.ts). **Decision: HOLD. Drive is not approved for production integration.** `drive.file` remains the only candidate scope; neither its success nor its failure across Focus Timer registrations has been demonstrated. No wider scope or hidden storage fallback was selected.
+Initial research: 2026-10-18. Live-evidence reassessment: 2026-10-19. Authority: `SPEC.md` §§16–24, 26, 36, 38, the [generic transport](../src/web/sync-transport.ts), and the user's current **Web/PWA v1** product scope.
 
-## Evidence boundary
+**Decision: GO WITH CHANGES for Web/PWA v1. The supplied live evidence is sufficient to establish technical transport feasibility using only `https://www.googleapis.com/auth/drive.file`.** The initial HOLD is superseded. The changes required before shipping are the concrete web implementation and acceptance obligations below; they preserve the existing contract and require no architecture redesign, broader scope, hidden storage, backend or mutable global manifest. This decision completes the feasibility assessment; it does not implement or authorize implementation of the production adapter in this phase, or declare an unimplemented integration ready to ship.
 
-The specification, protocol implementation/review/correction reports, production local/remote IndexedDB reports and design mapping, asynchronous runner report, generic transport and UI guidelines were read before implementation. Historical model/browser results establish their stated local guarantees; they do not establish Google behavior.
+**Native/desktop: DEFERRED / NOT IN CURRENT WEB V1 SCOPE.** No native OAuth interoperability is claimed. Native is not a confirmed near-term target and does not block the web product. If a native client becomes an actual product target, its own official OAuth registration must repeat the relevant discovery/read/publish interoperability proof with the web corpus and any other shipping clients before that native client ships. This records the current planned-client scope for SPEC §§24/36; earlier reports' hypothetical native matrix is a future-client requirement.
 
-Evidence labels throughout this phase:
+## Evidence provenance and limits
 
-- **Documented:** current authoritative Google documentation, linked in the supporting notes. An API accepting a scope does not prove a particular caller can see a particular file.
-- **Local:** execution against synthetic responses or local browser/storage code. This tests the experiment apparatus, not Google.
-- **Live:** an authenticated request using an identified official Focus Timer registration and recorded granted scope. **No such requests were possible in this environment.**
-- **Blocked / unproven:** a required observation lacks provider evidence. This differs from a demonstrated provider incompatibility.
+The specification, protocol implementation/review/correction reports, production local/remote IndexedDB reports and design mapping, asynchronous runner report, generic transport and UI guidelines were read for this phase. They establish their stated local guarantees, separately from provider observations.
 
-The managed runtime reported current observations with no secrets, runtime variables or outbound identities. No Focus Timer project/client IDs or interactive account consent were supplied. Its network policy excludes Google OAuth, GIS and Drive hosts; the runtime policy state was `unknown`, so configuration was not treated as proof of enforcement/readiness. An unauthenticated, bounded Drive reachability probe through the inherited proxy, with network access enabled for the command, failed with `Tunnel connection failed: 403 Forbidden`. An earlier sandbox-only attempt returned `Operation not permitted`. Neither is a Google API error, token failure, or evidence about file authorization. No connector-created files were used as a substitute: the connector's project, scopes and credentials are not the official application registrations under test.
+The live results were collected by the user with the isolated harness and supplied in this chat on 2026-10-19, followed by five JSON event exports. JGTU and FG1U identify the two official web registrations as reported by the user; both belong to the same Google Cloud project and used the same Google account for the positive cross-client tests. All seven distinct authorization events record exactly `https://www.googleapis.com/auth/drive.file`.
 
-## Findings and release gates
+The [event export audit and evidence index](drive-live-evidence-audit.md) records original-file SHA-256 fingerprints and one-based event references E01–E05. Overlapping snapshots contain 203 rows but **144 unique records**, not five independent trials. These client-side records corroborate the known harness's checks and identity correlations; they are not raw HTTP transcripts or a new provider execution by this agent. Original exports remain attachments, with full identifiers and opaque cursors excluded from repository documentation. Same-project/official-registration and clean-browser-profile setup context comes from the user, rather than being inferred from the JSON. Browser versions and Cloud registration configuration are not supplied by the exports.
 
-| Question | Result | Gate before architectural commitment |
-| --- | --- | --- |
-| Narrow scope | `drive.file` is the documented per-file candidate for app-created/selected files. | Prove actual granted scope and isolation from unrelated files using the official registrations. |
-| Cross-client corpus | Project-level OAuth consent is documented; automatic inheritance of the complete Drive file corpus across the required clients has not been established. | Web A → B, B → A, web ↔ desktop/native, fresh profile/reinstall and revocation/reauthorization must discover **and** read exact descriptor/segment bytes. |
-| Bootstrap | Generated IDs, stable local locators, immutable descriptor and explicit candidates are compatible with the contract in principle. | Exercise partial trees, locator loss, duplicate copies and simultaneous explicit creations. No singleton or snapshot assumption. |
-| Lost publication response | Google documents pre-generated-ID retries returning 409 following an earlier successful create. | Run the retained-ID multipart sequence and independently read/compare complete exact bytes and logical identity. A 409 alone never confirms. |
-| Enumeration | Page tokens and variable page sizes are documented; additions/deletions can alter later results. | Force pages, retain/replay tokens, append during/between scans, restart rejected continuation, and keep incomplete searches unresolved. |
-| Bounded reads | Blob media download and ranges are documented. Size/checksum/revision metadata is available in defined circumstances. | Prove the browser's bounded stream/cancellation behavior against real responses. Reread current bytes; no metadata shortcut is enabled. |
-| Failure classification | Current provider reasons support conservative, context-dependent mappings. | Observe token, access, root/object loss and interruption cases without converting ambiguity to deletion, recreation or confirmation. |
+The captured revoke event follows alternate-account authorization. The user explicitly clarified that the **correct corpus account's grant was revoked separately outside these exports**. W12 therefore combines confirmed outside-capture test context with the reported recovery and captured same-corpus reopening; it does not claim a correct-account revoke HTTP trace. Earlier synthetic checks remain labeled local and have not been relabeled as live results.
 
-Supporting evidence: [authorization](drive-authorization-evidence.md), [bootstrap](drive-bootstrap-evidence.md), [Drive API and error mapping](drive-api-evidence.md). These notes identify guarantees separately from hypotheses and required experiments.
+- **PROVEN:** the stated behavior was observed in the reported live scenario. It is finite scenario evidence, not a universal provider guarantee.
+- **PROVEN WITH CONSTRAINT:** the capability was observed, with a material account/client, completeness or reconciliation limit stated beside it.
+- **Documented / local only:** linked authoritative documentation or synthetic execution supports the implementation rule; the corresponding live fault was not reported.
+- **DEFERRED / NOT IN CURRENT WEB V1 SCOPE:** future native validation, with no current web release dependency.
 
-## Official-client authorization acceptance matrix
+The initial managed-runtime inability to reach Google or obtain official-client consent explains the 2026-10-18 HOLD. It does not negate the subsequently supplied live evidence and is no longer a blocker to the Web/PWA feasibility decision. A connector's separate OAuth registration was not used as a substitute for Focus Timer's official clients.
 
-Use the same test Google account initially. Record Cloud project identity, actual OAuth client type/ID, origin/platform, granted scopes, file IDs and hashes in local experiment evidence. Public client IDs are configuration; tokens and OAuth codes are never evidence exports. A user-supplied account label alone is not proof of Google account identity. Check account selection independently and repeat with a different account as a negative control.
+## Live web/provider evidence matrix
 
-| Producer | Consumer / condition | Required positive observation | Current result |
-| --- | --- | --- | --- |
-| Web A | Web B, different official client ID | Discover root without supplying its ID or using Picker; download descriptor and all A segments exactly. | Blocked |
-| Web B | Web A | B creates a segment in the selected shared root; A discovers/reads it exactly. | Blocked |
-| Web A/B | Desktop public OAuth client in same project | Native authorization with PKCE/system browser discovers and reads web corpus. | Blocked |
-| Desktop | Both web clients and another supported native registration | Publish original bytes under native credentials; peers discover/read them. | Blocked |
-| Any official client | Fresh browser profile / erased experiment locator / reinstall | Narrow consent, independent candidate discovery, explicit selection, exact reads. | Blocked |
-| Any official client | Expiry, revoke app access, then reauthorize | Record actual response; reconnect to original corpus or expose loss of authorization, without creating a replacement. | Blocked |
-| Official client | Wrong test account / unrelated unselected file | No silent corpus/account substitution. Existing unrelated file is not readable merely by known ID. | Blocked |
+| ID | Capability and observation | Classification | Constraint / consequence | Evidence references |
+| --- | --- | --- | --- | --- |
+| W01 | Exact granted scope was `https://www.googleapis.com/auth/drive.file`. | **PROVEN** | All seven distinct authorizations record the narrow grant. No arbitrary unrelated-file denial is inferred. | E02 #2/#30/#36; E04 #2/#6/#20; E05 #2. |
+| W02 | JGTU created the corpus; FG1U in the same project/account independently discovered its root without a supplied root ID. | **PROVEN WITH CONSTRAINT** | Creation, different-client/same-account discovery and matching root IDs are captured. Official/same-project setup and no pre-supplied root ID are user test context. | E02 #5–28/#36–41; E04 #6–8. |
+| W03 | Cross-client root/descriptor inspection and segment listing succeeded. | **PROVEN WITH CONSTRAINT** | Confirms access to inspected components/listed segments, not arbitrary descendants or projects. | E04 #22–26. |
+| W04 | Cross-client bounded segment read succeeded with valid identity and exact retained bytes where applicable. | **PROVEN WITH CONSTRAINT** | FG1U reads the initial JGTU-confirmed segment as `exact-retained-segment`. Original bytes are not exported for independent audit comparison. | E04 #3/#26/#29–30. |
+| W05 | The same FG1U client under a different account discovered zero candidates. | **PROVEN WITH CONSTRAINT** | Alternate-account zero results and corpus-account positive results use the same client string. Not global absence, arbitrary known-ID denial or production fencing. | E02 #30–32 versus #36–41. |
+| W06 | An incomplete tree was observed and rejected. | **PROVEN** | Captured zero descriptors/one segment folder, rejection, then successful inspection after descriptor publication. Not every partial layout/race. | E02 #5–15/#20–28. |
+| W07 | Retained generated Drive IDs survived retry. | **PROVEN** | Intent/state and retry references correlate without substituted IDs. Retain account/parent, identity and bytes before create; no crash/power-loss proof is inferred. | E04 #1–4/#32–63/#72–77. |
+| W08 | Accepted-response-loss retry used the same generated ID, returned **409**, then confirmed exact bytes and logical identity through fresh read-back. | **PROVEN** | Four distinct fully captured accepted-200/lost-response/409/verified-confirmation sequences. Comparator results are harness evidence; 409 alone never confirms. | E04 #44–48/#50–52/#54–56/#74–76. |
+| W09 | Real `pageSize=2` scan returned **2 + 2 + 1**, completing only at null continuation. | **PROVEN** | First two pages incomplete, third complete. No empty/short **continued** page is evidenced. | E04 #64–67. |
+| W10 | A segment created during a scan was omitted, then found by a later full scan. | **PROVEN WITH CONSTRAINT** | Actual reference-set comparison supports omission/later discovery, not snapshot isolation or a visibility deadline. | E04 #70–79/#82–85. |
+| W11 | Clean JGTU profile with **zero retained intents** found the root/descriptor, listed **all six segments**, and performed a bounded read. | **PROVEN WITH CONSTRAINT** | Zero-intent state and 2 + 2 + 2 enumeration are captured; clean-profile setup is user context. No six exact read-backs, full hydration or unpublished-data recovery is inferred. | E05 #1–7/#10–12/#17–18. |
+| W12 | Correct-account revocation followed by reauthorization/reconsent reopened the same corpus using `drive.file`. | **PROVEN WITH CONSTRAINT** | User confirmed correct-account revocation occurred separately outside these exports. Captured revoke targets the alternate account; same-corpus reopening is captured. No old-token failure/status is inferred. | User summary and explicit clarification; E02 #30–41 shows the captured sequence's limit. |
+| W13 | FG1U published a segment that JGTU later listed and read with valid identity. | **PROVEN WITH CONSTRAINT** | Reverse direction is now evidenced by matching remote/logical IDs. JGTU's zero-intent read is `valid-segment`, not exact-retained-original comparison. | E04 #36/#50–52; E05 #10–12/#17–18. |
+| W14 | An object read returned **404 / `notFound`**, retained as missing-or-inaccessible. | **PROVEN WITH CONSTRAINT** | Actual provider status/reason is captured. Cause may be nonexistent, inaccessible or mistyped ID; it is not missing-root/deletion evidence. | E04 #28. |
+| N01 | Desktop/native OAuth interoperability. | **DEFERRED / NOT IN CURRENT WEB V1 SCOPE** | Nonblocking for web v1. Validate an actual native registration's discovery/read/publish interoperability before shipping that future client. | No native evidence supplied. |
 
-Known-ID GET and discovery are separate observations. Selecting a root through Picker is a separate explicit-authorization experiment and cannot establish automatic discovery or descendant authorization. Do not preauthorize every file to manufacture a passing result. Previously broad grants can contaminate a scope test; use a clean app grant/test account and check returned scopes. A successful web A/B run cannot discharge a native registration that does not yet exist.
+The formerly blocking web questions—narrow grant, another official web registration discovering/reading the existing corpus, clean-profile rediscovery, reconsent recovery, stable publication retry/read-back and real paginated discovery—now have positive live evidence. **Drive can satisfy these assumptions for the current Web/PWA v1 scope.** Supporting details: [authorization](drive-authorization-evidence.md), [bootstrap](drive-bootstrap-evidence.md), [Drive API and error mapping](drive-api-evidence.md).
 
-If a required client cannot discover/read the existing corpus under `drive.file`, stop this transport choice and record the exact failed operation and grant context. Do not retry under `drive`, `drive.readonly`, or `drive.appdata` as an automatic workaround. If evidence stays unavailable, the gate stays unproven; absence of credentials does not prove `drive.file` is incapable.
+## Direction and failure coverage boundaries
 
-## Exact publication experiment
+Both web directions now have event-supported coverage: **JGTU-created corpus → FG1U discovery/inspection/list/exact-retained read**, and **FG1U publication → clean JGTU enumeration/bounded valid-identity read**. The latter has no retained original, so reverse exact-byte equality is not claimed. Production acceptance must preserve the actual comparison and scope/account conditions rather than generalizing to all future registrations.
 
-The isolated harness must record these observations on a real run:
+The wrong-account test and successful reconsent must not be expanded into unrecorded HTTP outcomes. W14 adds one actual missing-or-inaccessible-object `404 / notFound`; it does not prove why that ID was unavailable. Expired/revoked-token failures, diagnosed insufficient permissions, missing roots, quota/rate limits, temporary server failures, invalid/expired continuation responses, physical mid-transfer interruption, oversized remote bodies and changed bytes remain unobserved. Conservative handling remains a web implementation/test obligation using the documented mapping and controlled fault tests. Do not force quota exhaustion or outages to call the transport feasible.
 
-1. Allocate an ID using `files.generateIds` for ordinary Drive files; durably retain it with the chosen parent, dataset/segment identity and exact final bytes **before** `files.create`.
-2. Send one complete multipart create with retained ID, metadata and bytes. Do not create an empty file and patch it. Intentionally discard a successful response at the application boundary; retain the publication as unknown. This simulates response loss after known acceptance, not a physical network cut.
-3. Retry create with precisely the same retained ID, parent, identity and bytes after a reload if desired. Record actual HTTP status and safe API reason. Do not allocate another ID following uncertainty.
-4. Independently GET metadata and bounded `alt=media` content for that ID. Verify placement/type/availability and validate the descriptor/segment using the existing strict parser. Compare the entire returned byte array to the retained original and check expected dataset/segment/writer identity.
-5. Only complete equal readable bytes confirm; unavailable/interrupted reads stay unresolved, and complete different bytes are integrity failure. Repeat with an intentionally mutated **disposable probe**, never a production segment. Checksums are supplementary evidence.
+No cached checksum/version/revision indicator is approved to replace current exact-byte read-back. Live successful bounded reads establish the working path; adversarial size, truncation, cancellation and changed-content cases still need coverage in the production web adapter. A successful read after accepted publication establishes readability in that scenario, not an immediate-read visibility SLA.
 
-No live status, exact retry response, timing or read-back comparison has been observed yet. The documented expected 409 is a hypothesis to check, not a recorded outcome.
+## Concrete remaining Web/PWA v1 obligations
 
-## Enumeration and read experiment ledger
+These are implementation and acceptance work for a separately authorized web integration phase, not new protocol or architecture work:
 
-| Case | How to establish it | Current evidence |
-| --- | --- | --- |
-| Pagination | Create at least five synthetic blobs, request `pageSize=2`, follow actual `nextPageToken` until absent. | Documented API; live blocked. |
-| Short/empty continued page | Record if provider emits one; independently inject both into local apparatus. Never manufacture a live observation. | Live not observed. |
-| Opaque continuation | Store/reuse token unchanged with the same query/account/target. Do not parse or order it. | Documented API; live blocked. |
-| Rejected / expired token | Submit deliberately invalid token; retain real token across hours and replay later. Invalid is not proof of expiry behavior. | Documented restart rule; live blocked. |
-| Creation during scan | Pause after first page, create another retained-ID object, finish scan and repeat a full scan. Record omissions/duplicates without assuming either. | Live blocked. |
-| New/delayed objects | Add after completed scan and enumerate again. Real delayed visibility requires actual observation; local delay injection is only apparatus evidence. | Live blocked. |
-| Missing / inaccessible | Use a disposable nonexistent ID and a different test account or explicit permission change. Google's 404 may cover both. | Documented ambiguity; live blocked. |
-| Root loss | Trash/remove only a disposable test root; stop publication and preserve local intents. | Live blocked. |
-| Interrupted read | Abort actual media fetch, retry completely, and ensure no partial parse/acceptance. | Live blocked. |
-| Changed bytes / same ID | PATCH only a disposable blob, compare against retained originals, and report integrity mismatch. | Live blocked. |
-| Read after write | Attempt immediate bounded GET and repeat if unavailable; record observed latency without deriving a general timing guarantee. | Live blocked. |
-| Oversize / absent size | Refuse excessive metadata size, then enforce runtime byte cap regardless of size header/metadata or ignored range. | Local apparatus check; live blocked. |
+1. **Authorization and account pinning:** use user-driven GIS with transient tokens, validate the actual narrow grant and observed account, fence stale authorization callbacks and binding generations, and retain local work through disconnect/expiry/revocation. Keep credentials out of storage artifacts, diagnostics, exports and service-worker caches; do not promise closed-PWA or unattended renewal.
+2. **Explicit bootstrap and recovery:** persist creation intent and generated component IDs before create; validate the complete immutable descriptor and required placement before binding. Present zero, one, multiple, incomplete and unreadable candidates without first-result election. Preserve the selected locators, reject missing/inaccessible roots without automatic recreation, and cover competing local attempts/duplicate roots. Surface ambiguity; do not implement automatic corpus consolidation or a global manifest to solve it.
+3. **Verified publication:** pass the existing runner its durable generated-ID handle, reuse the exact sealed bytes/segment identity/account/parent on every attempt, and confirm only after fresh placement metadata and complete exact-byte/logical verification. Preserve unknown outcomes and verified references; 2xx/409 alone never acknowledges work. Cover retry and interruption boundaries in the actual web integration.
+4. **Full reconciliation:** consume every opaque continuation, including after short/empty pages; do not complete `incompleteSearch`; restart positively rejected continuations while retaining pending references. Recheck known omitted references and run later full scans so W10's omitted concurrent segment is discovered. Use no permanent filename/time/UUID frontier or snapshot assumption.
+5. **Bounded reads and integrity:** enforce transfer/allocation limits independently of metadata size and response headers, require complete descriptor/segment bytes, distinguish interrupted transfer from malformed content, and compare known originals on reread. Cover oversize/missing size, partial responses, abort/truncation and changed bytes under a known ID. Stable IDs or checksums alone do not establish immutable content; absence never emits a domain DELETE.
+6. **Conservative errors and composition:** implement the existing typed authorization/access/missing-dataset/missing-object/invalid-cursor/retryable/malformed/unsupported/integrity/unknown mappings with bounded sanitized diagnostics and bounded backoff. Verify that these outcomes compose with the existing IndexedDB/runner fences, exact acknowledgement membership and truthful status, preserving both web directions' observed identity/comparison constraints.
 
-No filename, time, UUID, list position or last-seen maximum becomes a permanent discovery frontier. A new full scan remains required. Empty candidate results do not prove no dataset exists, and a completed scan does not provide a lock for concurrent bootstrap.
+These obligations explain **GO WITH CHANGES** rather than production-release approval. They use capabilities now evidenced live and constraints the provider-independent contract already accommodates. No unsatisfied native proof or unsupported provider assumption requires redesigning that contract.
 
-## Local verification performed
+## Retained local verification and current change scope
 
-| Check | Result and evidence limit |
-| --- | --- |
-| `node --test --test-isolation=none experiments/google-drive/core.test.mjs` | **17/17 passed.** Synthetic HTTP/stream responses cover short/empty continued pages, incomplete search, opaque tokens, bounds, truncated/partial transfers, exact same-ID multipart retry, unreadable/conflicting content and sanitized errors. |
-| `PROOF_CHROMIUM_PATH=/usr/bin/chromium node experiments/google-drive/browser-smoke.mjs` (separate loopback server) | **Passed in Chromium 154.0.8037.57 on Linux.** Real browser/IndexedDB, entirely synthetic GIS/Drive responses. Checks committed IDs/bytes before fake acceptance, unknown response loss, document reload and B retry without new allocation, synthetic 409 followed by exact read-back, five segments over three pages, authorization callback fencing, wrong-account refusal, overbroad-token refusal, no token in retained records/diagnostics and no service worker. This certifies none of Google's account/scope/provider behavior. |
-| Experiment JavaScript syntax checks | Passed. |
-| `npm run build` | Passed TypeScript and Vite build, **47 production application modules**. Experiment markers/helpers are absent from generated assets. No production source was changed. |
-| `git diff --check` | Passed. |
+The original apparatus checks remain local evidence: **17/17 synthetic HTTP/stream tests**, a passing Chromium **154.0.8037.57** / IndexedDB smoke with synthetic GIS/Drive responses, syntax checks, a passing production build with **47 application modules**, and a clean diff check. They exercise bounded/partial reads, continued pages, retry, account/scope fencing and durable creation identity. Those results have not become Google observations.
 
-The browser check exposed a Web API invocation issue that Node's fake fetch did not: calling a stored native `fetch` as an instance method supplied the wrong receiver. The experiment now delegates through `globalThis.fetch`. The passing real-browser apparatus check is useful platform evidence, still separate from provider evidence. Existing production suites were not rerun because production source/contracts and dependencies are unchanged.
-
-## Scope of delivered work and continuation
-
-The [isolated experiment instructions](../experiments/google-drive/README.md) describe the runnable apparatus, dedicated experiment storage, exact-byte retry sequence and evidence collection. It does not implement `SyncTransport`, import the production runner, schedule synchronization, or bind production data. It requests only `drive.file` through user-driven GIS; native client proof remains a separately executed part of the matrix. No final sync UI, protocol, persistence or production runner changes are authorized or made in this phase.
-
-To unblock actual provider proof, supply the official project and public registration IDs/types; configure matching authorized local experiment origins, Drive API and consent test users; provide an interactive test-account consent path; and enable the necessary Google hosts through the supported environment/browser setup. Keep tokens and client secrets out of chat. The exact scopes and clean-grant conditions must be captured during execution. Network setup and client provisioning are missing prerequisites, not a request to widen Drive permissions.
-
-The next decision is based on recorded live matrix results. Until then, the provider-independent production architecture remains unchanged and the Drive integration gate stays closed.
+This reassessment changes documentation only. No new production tests/build are needed for a documentation-only decision update; validate links, status/matrix consistency and the diff. The [harness instructions](../experiments/google-drive/README.md) remain available for reproducible follow-up. No production Drive adapter, authorization integration, final sync UI, protocol, persistence or runner code is changed here.

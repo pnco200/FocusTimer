@@ -1,8 +1,21 @@
 # Google Drive bootstrap and root-discovery evidence
 
-Reviewed 2026-10-18. This is an isolated feasibility analysis for SPEC §§19, 22–24 and 36, read alongside the synchronization implementation/review/correction reports, production IndexedDB persistence reports, asynchronous runner report, `src/web/sync-transport.ts`, and UI guidelines. It adds no production adapter, persistence schema, authorization flow or final sync UI.
+Reviewed 2026-10-18; updated 2026-10-19 with the user's live harness results for **Web/PWA v1**. Authority remains SPEC §§19, 22–24 and 36, the existing reports, `src/web/sync-transport.ts`, and UI guidelines. No production adapter, persistence schema, authorization flow or final sync UI is added.
 
-**Gate status: documented mechanisms are plausible; official-client live proof is outstanding.** No authenticated Drive operation was performed for this analysis. All sequences below are proposed experiments or safety requirements, not observations of successful Google requests. The narrow-scope cross-client gate must pass before bootstrap can be called feasible for Focus Timer. An existing connected Drive integration uses its own OAuth application and cannot supply that proof.
+**Gate status: GO WITH CHANGES for Web/PWA v1.** The live summary is now supplemented by five [audited event exports](drive-live-evidence-audit.md), corroborating cross-client root inspection, incomplete-tree rejection, retained-ID retry and zero-intent recovery. See [the live matrix and provenance](drive-feasibility-report.md). The user confirmed correct-account revocation separately outside these captures; reopening the same corpus is recorded. Provider calls were not independently rerun here. Remaining sequences specify required safe implementation behavior, not every claimed live outcome. Native is **DEFERRED / NOT IN CURRENT WEB V1 SCOPE**, and does not block the recommendation.
+
+## Reported live bootstrap/recovery results
+
+| Behavior | Classification | Exact scope of observation |
+| --- | --- | --- |
+| Create and independently rediscover root | **PROVEN WITH CONSTRAINT** | JGTU created the corpus; FG1U in the same project/account found the root without being supplied its ID and inspected root/descriptor. |
+| Incomplete tree refusal | **PROVEN** | An incomplete tree was observed and rejected; not every incomplete layout or crash boundary was exercised. |
+| Durable creation identity / retry | **PROVEN** | Retained generated IDs survived retry; accepted-response-loss recovery returned 409 at the same ID and confirmed only after fresh metadata/media exact-byte and logical checks. |
+| Clean-profile locator recovery | **PROVEN WITH CONSTRAINT** | Zero retained intents; independent root discovery, descriptor inspection, all six segments enumerated and a successful bounded segment read. This is not full production hydration or six exact read-backs. |
+| Correct-account grant recovery | **PROVEN WITH CONSTRAINT** | User-confirmed correct-account revocation occurred separately outside these exports, followed by reported same-corpus recovery. E02 #30–41 instead captures an alternate-account revoke followed by original-account reopening. No revoked-token HTTP error is established. |
+| Different-account negative control | **PROVEN WITH CONSTRAINT** | The same web client under another account saw zero candidates; no claim of global absence or known-ID denial. |
+
+These observations resolve the original web bootstrap discovery/recovery feasibility question. They establish neither an account-global singleton nor atomic folder-tree creation; the existing explicit-selection/ambiguity rules remain necessary.
 
 ## Current authoritative provider evidence
 
@@ -14,13 +27,13 @@ The Google documentation below was retrieved on 2026-10-18. These are the exact 
 | [Generate file IDs](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/generateIds) | `GET /drive/v3/files/generateIds` returns IDs for the requesting user, suitable for later creation; `space=drive`, `type=files`, and `drive.file` are supported. | Generating IDs does not publish descriptor bytes or reserve an account-global dataset identity. It does not prove another OAuth client can use/read the result. |
 | [Create and manage files](https://developers.google.com/workspace/drive/api/guides/create-file) | A generated ID can be passed in `files.create` metadata. Retrying a successful create with that ID yields HTTP 409 and avoids another physical file. Folders support generated IDs. | A 409 does not attest to descriptor content, expected parent, dataset identity or current readability. Distinct IDs still create distinct resources. |
 | [Create and populate folders](https://developers.google.com/workspace/drive/api/guides/folder) | Folders are metadata-only files with MIME type `application/vnd.google-apps.folder`. Creation can specify a parent folder ID. | Separate root, child-folder and descriptor requests have no collective commit in this documented flow. |
-| [Search for files and folders](https://developers.google.com/workspace/drive/api/guides/search-files) and [custom properties](https://developers.google.com/workspace/drive/api/guides/properties) | Queries support parent membership and custom-property key/value matches. Public `properties` and private `appProperties` have different visibility. | Search only finds authorized, matching resources. Public metadata does not make file content public or bypass `drive.file`. Cross-client private-property behavior remains part of authorization testing. |
+| [Search for files and folders](https://developers.google.com/workspace/drive/api/guides/search-files) and [custom properties](https://developers.google.com/workspace/drive/api/guides/properties) | Queries support parent membership and custom-property key/value matches. Public `properties` and private `appProperties` have different visibility. | Search only finds authorized, matching resources. Public metadata does not make file content public or bypass `drive.file`. No cross-client `appProperties` portability is relied upon. |
 | [files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list) | Continue using `nextPageToken`; discard a rejected token and restart. The service can return fewer than `pageSize`; `incompleteSearch` means some results are absent. Added/removed files can change expected results. | A completed finite scan is not an atomic account-wide absence or singleton certificate. The reviewed v3 wording does not explicitly promise an observable empty continued page; the experiment must tolerate it without claiming it occurred. |
 | [Upload file data](https://developers.google.com/workspace/drive/api/guides/manage-uploads) | Multipart upload carries metadata and complete content in one request for small files. | It does not atomically create a folder tree. Client response loss still requires same-ID retry and byte read-back. |
 
 ## Representation and retained local authority
 
-The proposed experiment uses the SPEC representation: one visible root folder, one `segments` child folder, and one complete immutable `dataset.json` blob. Protocol descriptor content remains exactly `application`, `protocolVersion`, and `datasetId`. It gains no provider IDs, readiness flag or segment list.
+The experiment uses the SPEC representation: one visible root folder, one `segments` child folder, and one complete immutable `dataset.json` blob. Protocol descriptor content remains exactly `application`, `protocolVersion`, and `datasetId`. It gains no provider IDs, readiness flag or segment list.
 
 A **local bootstrap intent** is distinct from a production sync binding. It retains account context, expected local dataset/descriptor, exact descriptor UTF-8 bytes, a bootstrap-attempt identity, root/segments-folder/descriptor generated IDs, intended parent relationships, and each request's unresolved/verified state. Persist every retained ID before the first create using it. Persist both the intent and its selected IDs transactionally so competing tabs cannot each treat their own allocation as the winning local attempt. Losing allocations publish no content and may remain unused. Tokens are never intent fields.
 
@@ -28,7 +41,9 @@ Use public custom `properties` only as candidate hints for this experiment, for 
 
 The eventual local locator contains all three stable Drive IDs plus the pinned account and validated dataset identity. An opaque encoded locator is sufficient for the generic contract. Keep it in local adapter metadata and outside protocol artifacts and portable archives. Retaining a locator reduces dependence on search; it never grants access by itself.
 
-## Proposed durable bootstrap experiment
+## Durable bootstrap implementation sequence
+
+This sequence preserves the existing contract for the future web adapter. The reported live results establish the named behaviors above, not execution of every numbered failure/reload variant below.
 
 1. Check the authorized account and exact selected scope. Enumerate candidate roots completely, retaining incomplete/ambiguous outcomes. This is information for an explicit create/join choice; zero returned roots is not permission for automatic creation.
 2. After a deliberate choice to create a remote representation of this local dataset, commit the bootstrap intent. Request three generated IDs with `space=drive&type=files`, then atomically retain the selected triple before any resource creation. A lost allocation response is harmless: no dataset content has been created.
@@ -46,6 +61,8 @@ Retries preserve the exact intent. Metadata-only folders have no byte payload, s
 
 Keep discovery completeness separate from candidate validity and from user selection. Deduplicate returned references only by physical file ID, not name, property, UUID, or enumeration order. A new client without retained component IDs must gather every visible relevant child candidate and validate contents/relationships; a filename or role-property match cannot select one descriptor or segments folder.
 
+The following table is required handling for possible states, not a claim that every state was observed live. W05/W06/W11/W12 establish the reported negative-account, incomplete-tree and successful recovery scenarios.
+
 | Observed state | Required interpretation and action |
 | --- | --- |
 | No candidates; scan interrupted, rejected or `incompleteSearch=true` | Discovery unresolved. Retry/full reconciliation; never report “no existing history” or create automatically. |
@@ -61,7 +78,7 @@ Keep discovery completeness separate from candidate validity and from user selec
 
 After ordinary reconnect, retain the existing locator, verify the account and all required resources, and revalidate descriptor identity before resuming. Authorization renewal cannot silently redirect to another account or to a newly found root. A chosen locator must remain fixed throughout any outstanding bootstrap/read request.
 
-After reinstall or local locator loss, search is recovery candidate discovery, conditional on the unresolved official-client `drive.file` authorization gate. A separately retained non-secret root locator may help locate a candidate, but is neither authorization nor proof of its contents. A portable dataset archive intentionally lacks provider locators; its immutable corpus can validate/recover history but cannot recreate the old account binding automatically. Loss of unpublished local intent/content cannot be repaired by a root search.
+After reinstall or local locator loss, search is recovery candidate discovery. The zero-retained-intent clean-profile run now demonstrates that route for the tested web corpus under `drive.file`. A separately retained non-secret root locator may help locate a candidate, but is neither authorization nor proof of its contents. A portable dataset archive intentionally lacks provider locators; its immutable corpus can validate/recover history but cannot recreate the old account binding automatically. Loss of unpublished local intent/content cannot be repaired by a root search.
 
 A new client cannot prove that historical segments were never removed, that all first-seen bytes are authentic, or that a descriptor plus empty segments folder represents an originally empty history. Structural validation detects observed incompleteness; retained known identities detect known loss. Those are different from complete historical recovery.
 
@@ -72,7 +89,7 @@ The provider's generated-ID mechanism solves **one retained intent's idempotent 
 | Concurrency case | Safe result / remaining limit |
 | --- | --- |
 | Tabs share one local store and one dataset | A transactional winning intent/triple prevents duplicate local attempts. Web Locks may coordinate work but are not the durable uniqueness authority. |
-| Two clients deliberately share the same retained IDs, bytes and account | Same-ID retry should converge on the same physical resources under the documented create behavior; every response still needs read-back. Cross-client use of those IDs and file access requires live official-client proof. |
+| Two clients deliberately share the same retained IDs, bytes and account | Same-ID retry is supported by the documented behavior and the reported live retry/read-back. Transfer of one retained create handle between different OAuth clients was not separately reported; do not infer that scenario or skip read-back. |
 | Same retained IDs, different descriptor bytes or placement | Read-back mismatch stops the attempt. A 409 does not elect either client's desired content as correct. |
 | Same dataset UUID, independently allocated Drive IDs | Two remote copies can exist. Discover/reconcile both; matching dataset UUID does not authorize choosing one. |
 | Different dataset UUIDs and independent IDs | Two distinct histories can exist. Later discovery surfaces both; neither automatically becomes “the shared history.” |
@@ -83,10 +100,10 @@ The safe product contract is therefore explicit creation/selection, durable same
 
 If the requirement instead means “independent first installations must never create two physical datasets, including while neither can observe the other,” this Drive design cannot establish that guarantee without an additional shared coordination authority or pre-agreed shared creation identity. Neither is introduced here. SPEC §19 already permits concurrent distinct datasets and requires their ambiguity to be surfaced. Meeting that finite-safety requirement must not be reported as an account-global singleton proof.
 
-## Required live evidence before approval
+## Remaining web implementation acceptance
 
-Use disposable synthetic data and official Focus Timer clients after the narrow-scope gate is available. Record granted scope, stable anonymized client/account labels, request phase, HTTP status/reason, retained-ID reuse, byte/identity comparisons and observed candidate sets; exclude access tokens and private history.
+The live web evidence is sufficient for feasibility; the missing hypothetical native matrix is not a reason to wait. Production bootstrap still needs transactionally retained intent/component IDs, exact descriptor verification, explicit stable binding and safe partial/ambiguous/missing-root handling. Cover concurrent attempts, multiple roots/components, interrupted component creates and reloads in the actual web integration without asserting that those variants have already been observed live. Surface duplicate histories rather than adding automatic consolidation or another coordination architecture.
 
-The minimum run must: retry lost responses at each of three creates; reopen after every durable intent/component boundary; discover each incomplete tree; discover zero/one/multiple roots and multiple components without auto-selection; run two independent stores creating same and different dataset IDs; verify exact shared-ID retry; clear a client's locator and reauthorize through a second web ID; repeat with desktop/native; move/trash/deny access to each component; append a competing root during discovery and find it in later full passes. Record actual observations separately from documented expectations. A finite successful run raises confidence in those scenarios; it does not establish a global singleton or universal visibility bound.
+For follow-up tests, record only safe registration/account aliases, grant scope, request phase/status, retained-ID reuse, comparisons and candidate sets. Retain the successful clean-profile/reconsent evidence; do not demand their repetition merely because this managed runtime lacks consent. The reported during-scan segment omission and later discovery also require continued full reconciliation; they are not proof that a finite root scan elects a singleton.
 
-Until those records exist, this document supplies an experiment design and the architectural limit, not completion of the authorization/bootstrap proof gate.
+**Native/desktop remains DEFERRED / NOT IN CURRENT WEB V1 SCOPE.** If a native client is actually planned, its official OAuth registration must repeat discovery/read/publish interoperability with the existing web corpus and other shipping clients before that native client ships. The current recommendation is **GO WITH CHANGES for Web/PWA v1**, with only the concrete web obligations in [the final feasibility report](drive-feasibility-report.md).
