@@ -6,6 +6,7 @@ import { LocalError, prepareSessionEdit, type HistoryEntry, type Session } from 
 import { clockText, csvExport, download, focusText, historyExport, sessionDurationText, statistics } from './reporting';
 import { ownershipNotice, startupHeading, userError } from './ui-copy';
 import { createUuid } from './ids';
+import { GoogleDrivePanel } from './GoogleDrivePanel';
 
 function Modal({ title, children, close }: { title: string; children: ReactNode; close(): void }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -89,6 +90,7 @@ export default function App() {
   const [dataOpen, setDataOpen] = useState(false);
   const [storageStatus, setStorageStatus] = useState('');
   const [storageProtected, setStorageProtected] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('Local only');
   const [offlineStatus, setOfflineStatus] = useState(import.meta.env.DEV ? 'Offline use isn’t available in this preview.' : 'serviceWorker' in navigator ? 'Getting Focus Timer ready for offline use…' : 'Offline reopening isn’t available at this address. Keep this tab open, or use an HTTPS address.');
   const [dark, setDark] = useState(() => {
     try { return localStorage.getItem('focus-timer-theme') === 'dark' || (!localStorage.getItem('focus-timer-theme') && matchMedia('(prefers-color-scheme: dark)').matches); } catch { return false; }
@@ -178,7 +180,7 @@ export default function App() {
     <header className="app-header"><a className="brand" href="#" onClick={event => { event.preventDefault(); setPage('timer'); }}><span className="brand-icon" aria-hidden="true">◷</span>Focus Timer</a>
       <nav aria-label="Main navigation"><button className={page === 'timer' ? 'nav-active' : ''} aria-current={page === 'timer' ? 'page' : undefined} onClick={() => setPage('timer')}>Timer</button>
         <button className={page === 'history' ? 'nav-active' : ''} aria-current={page === 'history' ? 'page' : undefined} onClick={() => setPage('history')}>History</button></nav>
-      <div className="header-actions"><span className="local-badge"><span aria-hidden="true">●</span> Local only</span><button className="icon-button theme-toggle" aria-label={`Use ${dark ? 'light' : 'dark'} theme`} onClick={() => setDark(!dark)}>{dark ? '☀' : '☾'}</button></div>
+      <div className="header-actions"><span className="local-badge"><span aria-hidden="true">●</span> {syncStatus}</span><button className="icon-button theme-toggle" aria-label={`Use ${dark ? 'light' : 'dark'} theme`} onClick={() => setDark(!dark)}>{dark ? '☀' : '☾'}</button></div>
     </header>
     <main>
       {startupError ? <section className="card recovery-card"><h1>{startupHeading(startupError)}</h1><p role="alert">{userError(startupError, 'open')}</p>
@@ -200,6 +202,7 @@ export default function App() {
           {client.error && <div className="notice error-notice" role="alert"><span>{client.error}</span><button onClick={() => void client.run(() => client.stopwatch ? client.stopwatch.checkpoint() : client.refresh())}>Retry save</button></div>}
           {client.notice && <div className="notice" role="status"><span>{client.notice}</span><button className="quiet" onClick={() => { client.notice = ''; client.emit(); }}>Dismiss</button></div>}
           {!client.owner && <div className="notice owner-notice"><span>{ownershipNotice(client.hasRecentOwnerSample)}</span><button onClick={() => setRecover(true)}>Continue here</button></div>}
+          <GoogleDrivePanel client={client} onStatus={setSyncStatus} />
           {page === 'timer' ? <>
             <div className="page-intro"><p className="eyebrow">ONE THING AT A TIME</p><h1>Make room for focus.</h1><p>Start when you’re ready. Your time is yours.</p></div>
             <div className="workspace-grid"><section className="card timer-card" aria-label="Focus stopwatch">
@@ -224,7 +227,7 @@ export default function App() {
               {filtered.length ? <SessionRows entries={filtered} edit={setEditor} remove={setDeleting} /> : <div className="empty-state"><h3>{query ? 'No matching sessions.' : 'A fresh start.'}</h3><p>{query ? 'Try another description.' : 'Your completed sessions will be waiting here.'}</p></div>}
             </section>
           </>}
-          <footer><p><span aria-hidden="true">⌁</span> Your work stays in this browser. No account needed.</p><button className="text-button" onClick={() => setDataOpen(true)}>Data & storage</button></footer>
+          <footer><p><span aria-hidden="true">⌁</span> Saved on this device. Sync is optional. No account needed.</p><button className="text-button" onClick={() => setDataOpen(true)}>Data & storage</button></footer>
           {editor && <Editor entry={editor} close={() => setEditor(null)} save={async candidate => {
             const result = await client.run(async () => { await client.repository.edit(editor.datasetId, editor.winner.opId, candidate); return true; });
             if (!result) throw client.lastError ?? new Error('Session edit failed.');

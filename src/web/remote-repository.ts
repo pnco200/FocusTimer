@@ -1,5 +1,5 @@
 import { MAX_COUNTER, MAX_OPERATIONS, MAX_SEGMENT_BYTES, nextCounter, operationEqual, parseSegment,
-  validateDescriptor, validateOperation, validateUuid, decodeUtf8 } from '../protocol/index.js';
+  validateDescriptor, validateOperation, validateUuid, decodeUtf8, parseDescriptor } from '../protocol/index.js';
 import { materializeOperations } from '../sync/local.js';
 import { RemoteError, sameBytes, samePin, sameDestination, makeReservation, sealedBytes,
   validateConfirmation, validateBindingTarget, coveragePending, remoteStatus } from '../sync/remote.js';
@@ -9,6 +9,18 @@ import type { Active, Collection, Descriptor, Installation, Operation } from './
 export interface Binding {
   provider?: string; account: string; locator: string; datasetId: string; generation: number;
 }
+/** Non-secret provider creation authority. Never pass OAuth responses into this value. */
+export interface BootstrapIntent {
+  version: 1; account: string; locator: string; descriptor: Descriptor; descriptorBytes: Uint8Array;
+}
+export interface JoinPlan {
+  version: 1; id: string; sourceDatasetId: string; sourceGeneration: number; sourceRevision: number;
+  descriptor: Descriptor; provider: string; account: string; locator: string; scope: 'all-visible';
+  state: 'hydrating' | 'complete' | 'cancelled'; binding: Binding | null;
+  hydration: { passId: number; enumerationComplete: boolean; reconciled: boolean };
+  completedSourceRevision?: number; adoptedEntityIds?: string[];
+}
+export interface JoinScope { datasetId: string; sourceDatasetId: string; sourceGeneration: number; planId: string }
 export interface Publication {
   datasetId: string; segmentId: string; writerId: string; binding: Binding;
   operations: Operation[]; operationIds: string[]; bytes: Uint8Array | null;
@@ -33,7 +45,7 @@ interface Remote {
 }
 interface Pending { datasetId: string; opId: string; reservation: string | null }
 interface Failure { code?: string; classification?: string; message?: string }
-interface Context { installation: Installation; collection: Collection; remote: Remote }
+interface Context { installation: Installation; collection: Collection; remote: Remote; plan?: JoinPlan }
 const fresh = (datasetId: string): Remote => ({ datasetId, binding: null, lastBinding: null,
   bindingGeneration: 0, blocked: null, pass: { binding: null, passId: 0, checkpoint: null,
     enumerationComplete: false, reconciled: false, inProgress: false, error: null, lastSuccess: null } });
@@ -41,7 +53,8 @@ const keyed = <T>(values: T[], key: (value: T) => string) => Object.fromEntries(
 
 /** Async persistence boundary only. No transport assertions, credentials, scheduler, or network calls. */
 export class RemoteRepository {
-  constructor(private db: IDBDatabase, private ids: () => string, private fault: () => Fault | undefined) {}
+  constructor(private db: IDBDatabase, private ids: () => string, private fault: () => Fault | undefined,
+    private scope?: JoinScope) {}
 
   private get<T>(tx: IDBTransaction, store: string, key: IDBValidKey): Promise<T | undefined> {
     return request(tx.objectStore(store).get(key));
@@ -54,10 +67,21 @@ export class RemoteRepository {
   private async context(tx: IDBTransaction): Promise<Context> {
     const installation = await this.get<Installation>(tx, 'meta', 'installation');
     if (!installation) throw new RemoteError('recovery', 'Initialize local storage first');
-    const collection = await this.get<Collection>(tx, 'collections', installation.selectedDatasetId);
+    let plan: JoinPlan | undefined;
+    if (this.scope) {
+      plan = await this.get<JoinPlan>(tx, 'meta', 'join-plan');
+      const source = await this.get<Remote>(tx, 'remote', this.scope.sourceDatasetId);
+      if (installation.selectedDatasetId !== this.scope.sourceDatasetId || plan?.state !== 'hydrating'
+        || plan.id !== this.scope.planId || plan.descriptor.datasetId !== this.scope.datasetId
+        || plan.sourceDatasetId !== this.scope.sourceDatasetId
+        || plan.sourceGeneration !== this.scope.sourceGeneration
+        || (source?.bindingGeneration ?? 0) !== this.scope.sourceGeneration) throw new RemoteError('stale-join');
+    }
+    const datasetId = this.scope?.datasetId ?? installation.selectedDatasetId;
+    const collection = await this.get<Collection>(tx, 'collections', datasetId);
     if (!collection) throw new RemoteError('recovery', 'Missing collection');
-    return { installation, collection,
-      remote: await this.get<Remote>(tx, 'remote', installation.selectedDatasetId) ?? fresh(installation.selectedDatasetId) };
+    return { installation, collection, plan,
+      remote: await this.get<Remote>(tx, 'remote', datasetId) ?? fresh(datasetId) };
   }
   private check(remote: Remote, pin: Binding, allowBlocked = false) {
     if (!samePin(remote.binding, pin)
@@ -71,9 +95,18 @@ export class RemoteRepository {
     pin = structuredClone(pin);
     return transaction(this.db, 'readwrite', async tx => {
       const ctx = await this.context(tx);
+      if (ctx.plan && ['bootstrap', 'reserve', 'seal', 'retryHandle', 'attempt', 'unknown', 'confirm', 'ack', 'disconnect'].includes(kind)) {
+        throw new RemoteError('join-not-complete');
+      }
       if (pin) this.check(ctx.remote, pin, allowBlocked);
       const result = await work(tx, ctx);
       await this.put(tx, 'remote', ctx.remote);
+      if (ctx.plan) {
+        ctx.plan.binding = structuredClone(ctx.remote.binding);
+        const { passId, enumerationComplete, reconciled } = ctx.remote.pass;
+        ctx.plan.hydration = { passId, enumerationComplete, reconciled };
+        await request(tx.objectStore('meta').put(ctx.plan, 'join-plan'));
+      }
       this.step(tx, `${kind}.end`);
       return result;
     }, (point, tx) => this.fault()?.(point, tx));
@@ -85,13 +118,53 @@ export class RemoteRepository {
   }
 
   captureBinding() { return this.read(async (_tx, ctx) => ctx.remote.binding); }
+  bindingState() {
+    return this.read(async (_tx, { remote }) => ({ binding: remote.binding, lastBinding: remote.lastBinding,
+      bindingGeneration: remote.bindingGeneration, error: remote.pass.error,
+      blocked: remote.blocked?.classification ?? null, lastSuccess: remote.pass.lastSuccess }));
+  }
+  getBootstrapIntent(account?: string): Promise<BootstrapIntent | null> {
+    return this.read(async (tx, { remote }) => {
+      const intent = await this.get<BootstrapIntent>(tx, 'meta', ['drive-bootstrap', remote.datasetId]);
+      if (intent && account !== undefined && intent.account !== account) throw new RemoteError('authorization');
+      return intent ?? null;
+    });
+  }
+  retainBootstrapIntent(input: BootstrapIntent, { expectedGeneration }: { expectedGeneration?: number } = {}): Promise<BootstrapIntent> {
+    const descriptor = validateDescriptor(input?.descriptor) as Descriptor;
+    if (input?.version !== 1 || typeof input.account !== 'string' || !input.account
+      || typeof input.locator !== 'string' || !input.locator || !(input.descriptorBytes instanceof Uint8Array)
+      || input.descriptorBytes.length > MAX_SEGMENT_BYTES) throw new RemoteError('invalid-bootstrap-intent');
+    const parsed = parseDescriptor(input.descriptorBytes) as Descriptor;
+    if (JSON.stringify(parsed) !== JSON.stringify(descriptor)) throw new RemoteError('integrity');
+    // Reconstruct the whitelist, excluding accidentally attached credential fields.
+    const intent: BootstrapIntent = { version: 1, account: input.account, locator: input.locator,
+      descriptor: structuredClone(descriptor), descriptorBytes: Uint8Array.from(input.descriptorBytes) };
+    return this.write('bootstrap', null, async (tx, { collection, remote }) => {
+      if (descriptor.datasetId !== remote.datasetId || JSON.stringify(collection.descriptor) !== JSON.stringify(descriptor)) {
+        throw new RemoteError('dataset-mismatch');
+      }
+      if (expectedGeneration !== undefined && expectedGeneration !== remote.bindingGeneration) throw new RemoteError('stale-binding');
+      const key = ['drive-bootstrap', remote.datasetId];
+      const retained = await this.get<BootstrapIntent>(tx, 'meta', key);
+      if (retained) {
+        if (retained.account !== intent.account) throw new RemoteError('authorization');
+        if (!sameBytes(retained.descriptorBytes, intent.descriptorBytes)) throw new RemoteError('integrity');
+        return retained;
+      }
+      await request(tx.objectStore('meta').add(intent, key));
+      this.step(tx, 'bootstrap.intent'); return intent;
+    });
+  }
   assertPin(pin: Binding) { pin = structuredClone(pin); return this.read(async (_tx, ctx) => this.check(ctx.remote, pin)); }
   async bind(input: { provider?: string; account: string; locator: string; descriptor: Descriptor;
     expectedGeneration?: number; resumePublications?: boolean }): Promise<Binding> {
     const { provider = 'abstract', account, locator, expectedGeneration, resumePublications = false } = structuredClone(input);
     const descriptor = validateDescriptor(input.descriptor) as Descriptor;
     if (![provider, account, locator].every(value => typeof value === 'string' && value.length > 0)) throw new RemoteError('invalid-binding');
-    return this.write('bind', null, async (tx, { remote, collection }) => {
+    return this.write('bind', null, async (tx, { remote, collection, plan }) => {
+      if (plan && (plan.provider !== provider || plan.account !== account || plan.locator !== locator
+        || plan.descriptor.datasetId !== descriptor.datasetId)) throw new RemoteError('stale-join');
       const active = await this.get<Active>(tx, 'active', 'current');
       const publications = await this.all<Publication>(tx, 'publications', remote.datasetId);
       const pending = publications.filter(value => value.state !== 'acknowledged');
@@ -102,7 +175,7 @@ export class RemoteRepository {
       const retained = publications.length || await request(tx.objectStore('operations').index('dataset').count(remote.datasetId))
         || await request(tx.objectStore('segments').index('dataset').count(remote.datasetId))
         || await request(tx.objectStore('artifacts').index('dataset').count(remote.datasetId));
-      validateBindingTarget({ generation: remote.bindingGeneration, active: active?.state !== 'idle',
+      validateBindingTarget({ generation: remote.bindingGeneration, active: !this.scope && active?.state !== 'idle',
         datasetId: collection.descriptor.datasetId, pendingPublications: pending, established, retainedCorpus: !!retained },
       { provider, account, locator, descriptor, expectedGeneration: expectedGeneration ?? remote.bindingGeneration, resumePublications });
       remote.bindingGeneration = nextCounter(remote.bindingGeneration);
@@ -528,9 +601,24 @@ export class RemoteRepository {
   }
   /** Full lossless local corpus archive; provider metadata never enters this value. */
   archive() {
-    return this.read(async (tx, { remote, collection }) => {
-      const segments = await this.all<Segment>(tx, 'segments', remote.datasetId);
-      const publications = await this.all<Publication>(tx, 'publications', remote.datasetId);
+    return this.read(async (tx, { collection }) => this.archiveCorpus(tx, collection));
+  }
+  /** Read-only access to retained source history after an explicit join. */
+  archiveDataset(datasetId: string) {
+    validateUuid(datasetId);
+    return transaction(this.db, 'readonly', async tx => {
+      const collection = await this.get<Collection>(tx, 'collections', datasetId);
+      if (!collection) throw new RemoteError('recovery', 'Missing retained collection');
+      validateDescriptor(collection.descriptor);
+      const operations = (await this.all<Operation>(tx, 'operations', datasetId)).map(value => validateOperation(value) as Operation);
+      await this.audit(tx, datasetId, operations, await this.all<Pending>(tx, 'outbox', datasetId));
+      return this.archiveCorpus(tx, collection);
+    });
+  }
+  private async archiveCorpus(tx: IDBTransaction, collection: Collection) {
+      const datasetId = collection.descriptor.datasetId;
+      const segments = await this.all<Segment>(tx, 'segments', datasetId);
+      const publications = await this.all<Publication>(tx, 'publications', datasetId);
       const included = new Map(segments.map(value => [value.segmentId, value]));
       for (const publication of publications) if (publication.bytes) {
         const previous = included.get(publication.segmentId);
@@ -541,7 +629,6 @@ export class RemoteRepository {
       const covered = new Set(ordered.flatMap(value => value.operationIds));
       return { format: 'focus-timer-dataset-archive', formatVersion: 1, coverage: 'local-replica', dataset: collection.descriptor,
         segments: ordered.map(value => decodeUtf8(value.bytes)),
-        unsegmentedOperations: (await this.all<Operation>(tx, 'operations', remote.datasetId)).filter(value => !covered.has(value.opId)).sort((a, b) => a.opId < b.opId ? -1 : 1) };
-    });
+        unsegmentedOperations: (await this.all<Operation>(tx, 'operations', datasetId)).filter(value => !covered.has(value.opId)).sort((a, b) => a.opId < b.opId ? -1 : 1) };
   }
 }

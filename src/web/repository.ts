@@ -6,11 +6,12 @@ import { authoredSession, editedSession, localOperation, materializeOperations }
 import {
   emptyActive, historyOrder, LocalError, validateActive,
   type Active, type ActivePin, type Collection, type HistoryEntry, type Installation,
-  type LocalView, type Operation, type Session,
+  type LocalView, type Operation, type Session, type Descriptor,
 } from './model';
 import { createUuid } from './ids';
 import { STORES, request, transaction, type Store } from './idb';
-import { RemoteRepository } from './remote-repository';
+import { RemoteRepository, type Binding, type JoinPlan } from './remote-repository';
+import { RemoteError, samePin } from '../sync/remote.js';
 
 export const DATABASE_VERSION = 3;
 interface OutboxEntry { datasetId: string; opId: string; reservation: string | null }
@@ -77,6 +78,129 @@ export class LocalRepository {
 
   close() { this.db.close(); }
   remote() { return new RemoteRepository(this.db, this.ids, () => this.fault); }
+
+  /** A deliberate join hydrates another collection while commands retain the source. */
+  async stageJoin(input: { provider?: string; account: string; locator: string; descriptor: Descriptor;
+    expectedSourceDatasetId: string; expectedGeneration: number }) {
+    input = structuredClone(input);
+    const descriptor = validateDescriptor(input.descriptor) as Descriptor;
+    const provider = input.provider ?? 'abstract';
+    if (![provider, input.account, input.locator].every(value => typeof value === 'string' && !!value)) throw new RemoteError('invalid-binding');
+    const plan = await this.transaction('readwrite', async tx => {
+      const { installation, collection } = await this.context(tx);
+      const sourceDatasetId = installation.selectedDatasetId;
+      const source = await this.get<{ bindingGeneration: number }>(tx, 'remote', sourceDatasetId);
+      if (sourceDatasetId !== input.expectedSourceDatasetId || (source?.bindingGeneration ?? 0) !== input.expectedGeneration) throw new RemoteError('stale-binding');
+      if (sourceDatasetId === descriptor.datasetId) throw new RemoteError('dataset-mismatch', 'Use the retained binding for this history');
+      const pending = await this.get<JoinPlan>(tx, 'meta', 'join-plan');
+      if (pending?.state === 'hydrating') {
+        if (pending.sourceDatasetId !== sourceDatasetId || pending.sourceGeneration !== input.expectedGeneration
+          || pending.provider !== provider || pending.account !== input.account || pending.locator !== input.locator
+          || JSON.stringify(pending.descriptor) !== JSON.stringify(descriptor)) throw new RemoteError('join-in-progress');
+        return pending;
+      }
+      const existing = await this.get<Collection>(tx, 'collections', descriptor.datasetId);
+      if (existing && JSON.stringify(validateDescriptor(existing.descriptor)) !== JSON.stringify(descriptor)) throw new RemoteError('integrity');
+      if (!existing) await this.add(tx, 'collections', { descriptor, highWater: 0 });
+      const next: JoinPlan = { version: 1, id: this.ids(), sourceDatasetId,
+        sourceGeneration: input.expectedGeneration, sourceRevision: collection.highWater,
+        descriptor, provider, account: input.account, locator: input.locator, scope: 'all-visible',
+        state: 'hydrating', binding: null, hydration: { passId: 0, enumerationComplete: false, reconciled: false } };
+      validateUuid(next.id);
+      await this.put(tx, 'meta', next, 'join-plan'); return next;
+    });
+    const repository = new RemoteRepository(this.db, this.ids, () => this.fault, {
+      datasetId: descriptor.datasetId, sourceDatasetId: plan.sourceDatasetId,
+      sourceGeneration: plan.sourceGeneration, planId: plan.id });
+    const state = await repository.bindingState();
+    let binding = state.binding;
+    if (binding && (binding.provider !== provider || binding.account !== input.account || binding.locator !== input.locator)) {
+      throw new RemoteError('destination-transfer-required');
+    }
+    if (!binding) {
+      try {
+        binding = await repository.bind({ provider, account: input.account, locator: input.locator,
+          descriptor, expectedGeneration: state.bindingGeneration, resumePublications: true });
+      } catch (error) {
+        if (!(error instanceof RemoteError) || error.code !== 'stale-binding') throw error;
+        binding = await repository.captureBinding();
+        if (!binding || binding.provider !== provider || binding.account !== input.account || binding.locator !== input.locator) throw error;
+      }
+    }
+    // Recheck source selection even when the target was already durably bound.
+    await repository.assertPin(binding);
+    return { repository, binding, plan: (await this.pendingJoin())! };
+  }
+
+  pendingJoin(): Promise<JoinPlan | null> {
+    return this.transaction('readonly', async tx => {
+      const plan = await this.get<JoinPlan>(tx, 'meta', 'join-plan');
+      return plan?.state === 'hydrating' ? plan : null;
+    });
+  }
+
+  cancelJoin(planId: string) {
+    return this.transaction('readwrite', async tx => {
+      const plan = await this.get<JoinPlan>(tx, 'meta', 'join-plan');
+      if (plan?.id !== planId || plan.state !== 'hydrating') throw new RemoteError('stale-join');
+      plan.state = 'cancelled'; await this.put(tx, 'meta', plan, 'join-plan');
+    });
+  }
+
+  /** No provisional operations exist: fresh source winners are adopted at atomic idle cutover. */
+  async commitJoin(planId: string) {
+    await this.transaction('readwrite', async tx => {
+      const plan = await this.get<JoinPlan>(tx, 'meta', 'join-plan');
+      // Commit response loss may be retried without authoring duplicate operations.
+      if (plan?.id === planId && plan.state === 'complete') return;
+      const ctx = await this.context(tx);
+      if (plan?.id !== planId || plan.state !== 'hydrating' || ctx.installation.selectedDatasetId !== plan.sourceDatasetId) throw new RemoteError('stale-join');
+      if (ctx.active.state !== 'idle') throw new RemoteError('active-not-idle');
+      const sourceRemote = await this.get<{ bindingGeneration: number }>(tx, 'remote', plan.sourceDatasetId);
+      if ((sourceRemote?.bindingGeneration ?? 0) !== plan.sourceGeneration) throw new RemoteError('stale-binding');
+      const target = await this.get<Collection>(tx, 'collections', plan.descriptor.datasetId);
+      const targetRemote = await this.get<{ binding: Binding | null; blocked: unknown;
+        pass: { reconciled: boolean; enumerationComplete: boolean; inProgress: boolean; error: unknown } }>(tx, 'remote', plan.descriptor.datasetId);
+      if (!target || JSON.stringify(validateDescriptor(target.descriptor)) !== JSON.stringify(plan.descriptor)
+        || !targetRemote || !plan.binding || !samePin(targetRemote.binding, plan.binding)) throw new RemoteError('stale-binding');
+      if (!targetRemote.pass.reconciled || !targetRemote.pass.enumerationComplete || targetRemote.pass.inProgress
+        || targetRemote.pass.error || targetRemote.blocked) throw new RemoteError('join-incomplete');
+      const sourceOperations = (await this.all<Operation>(tx, 'operations', plan.sourceDatasetId)).map(value => validateOperation(value) as Operation);
+      const targetOperations = (await this.all<Operation>(tx, 'operations', plan.descriptor.datasetId)).map(value => validateOperation(value) as Operation);
+      await this.remote().audit(tx, plan.sourceDatasetId, sourceOperations, await this.all<OutboxEntry>(tx, 'outbox', plan.sourceDatasetId));
+      await this.remote().audit(tx, plan.descriptor.datasetId, targetOperations, await this.all<OutboxEntry>(tx, 'outbox', plan.descriptor.datasetId));
+      const sourceWinners = materializeOperations(sourceOperations, ctx.collection.highWater).winners as Map<string, Operation>;
+      const reducedTarget = materializeOperations(targetOperations, target.highWater);
+      const targetWinners = reducedTarget.winners as Map<string, Operation>;
+      target.highWater = reducedTarget.highWater;
+      const adoptedEntityIds: string[] = [];
+      for (const [entityId, winner] of sourceWinners) {
+        if (winner.operation !== 'UPSERT' || targetWinners.has(entityId)) continue;
+        await this.author(tx, { installation: ctx.installation, collection: target }, entityId, 'UPSERT', winner.payload);
+        adoptedEntityIds.push(entityId);
+      }
+      this.fault?.('join.operations', tx);
+      ctx.installation.selectedDatasetId = plan.descriptor.datasetId;
+      await this.put(tx, 'meta', ctx.installation, 'installation');
+      await this.put(tx, 'active', emptyActive(plan.descriptor.datasetId, nextCounter(ctx.active.revision), ctx.active.owner, ctx.active.description), 'current');
+      plan.state = 'complete'; plan.completedSourceRevision = ctx.collection.highWater; plan.adoptedEntityIds = adoptedEntityIds;
+      await this.put(tx, 'meta', plan, 'join-plan');
+      await this.put(tx, 'evidence', { kind: 'completed-join', plan });
+      this.fault?.('join.cutover', tx);
+    });
+    return this.view();
+  }
+
+  retainedCollections() {
+    return this.transaction('readonly', async tx => {
+      const { installation } = await this.context(tx);
+      const collections = await request(tx.objectStore('collections').getAll()) as Collection[];
+      return collections.filter(value => value.descriptor.datasetId !== installation.selectedDatasetId)
+        .map(value => ({ descriptor: validateDescriptor(value.descriptor) as Descriptor }));
+    });
+  }
+
+  archiveCollection(datasetId: string) { return this.remote().archiveDataset(datasetId); }
 
   private async transaction<T>(mode: IDBTransactionMode, work: (tx: IDBTransaction) => Promise<T>): Promise<T> {
     return transaction(this.db, mode, work, (point, tx) => this.fault?.(point, tx));

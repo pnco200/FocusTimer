@@ -126,6 +126,11 @@ export class TimerClient {
       }
     }
     this.view = view;
+    // A deliberate hydrated join keeps the idle execution owner but changes the
+    // collection/revision. Replace its command context so queued old work is stale.
+    if (this.owner && this.stopwatch && this.stopwatch.active.datasetId !== view.active.datasetId) {
+      this.stopwatch = new Stopwatch(view.active, this.repository);
+    }
     if (!this.owner && this.followerSample && view.active.revision > this.followerSample.active.revision) this.followerSample = null;
     this.emit();
   }

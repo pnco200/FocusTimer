@@ -14,9 +14,9 @@ export default defineConfig({
     { name: 'edge-desktop', use: { channel: 'msedge', viewport: { width: 1366, height: 900 } } },
   ],
   webServer: [
-    { command: 'npm run preview -- --port 4173 --strictPort', url: 'http://127.0.0.1:4173', reuseExistingServer: false, timeout: 30000 },
+    { command: `"${process.execPath}" node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4173 --strictPort`, url: 'http://127.0.0.1:4173', reuseExistingServer: false, timeout: 30000 },
     // Direct repository tests use the exact TS source through Vite; the app
     // scenarios above still run the built production bundle and service worker.
-    { command: 'npm run dev -- --port 4174 --strictPort', url: 'http://127.0.0.1:4174/e2e/fixtures/repository.html', reuseExistingServer: false, timeout: 30000 },
+    { command: `"${process.execPath}" node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4174 --strictPort`, url: 'http://127.0.0.1:4174/e2e/fixtures/repository.html', reuseExistingServer: false, timeout: 30000 },
   ],
 });
