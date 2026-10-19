@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>Focus Timer — isolated Drive proof</title>
+<style>
+body{font:16px/1.5 system-ui;max-width:68rem;margin:2rem auto;padding:0 1rem;color:#192331;background:#f8fafc}fieldset{margin:1.2rem 0;padding:1rem;border:1px solid #b8c4d1}legend{font-weight:650}label{display:block;margin:.5rem 0}input,select,button{font:inherit;padding:.4rem;margin:.2rem;max-width:100%}input{width:30rem}button{cursor:pointer}button:disabled{cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#e9eff5;padding:1rem;max-height:36rem;overflow:auto}small{display:block}code{overflow-wrap:anywhere}#status{font-weight:650}details{margin:1rem 0}
+</style><script src="https://accounts.google.com/gsi/client" async defer></script></head>
+<body><h1>Isolated Google Drive proof</h1>
+<p>This diagnostic experiment creates disposable files in the chosen Google account. It does not sync Focus Timer history. Cross-client authorization is unproven until the official-client matrix is recorded.</p>
+<p>Only <code>drive.file</code> is requested. Tokens stay in memory. Use a dedicated test account and the separate server origin described in the README. Do not paste tokens, secrets, real session data or private descriptions here.</p>
+<p id="status" role="status">Disconnected</p>
+<fieldset><legend>1. Official client and account</legend>
+<label>Public web OAuth client A ID <input id="clientA" autocomplete="off" placeholder="…apps.googleusercontent.com"></label>
+<label>Public web OAuth client B ID <input id="clientB" autocomplete="off" placeholder="…apps.googleusercontent.com"></label>
+<label>Authorize as <select id="client"><option value="clientA">Client A</option><option value="clientB">Client B</option></select></label>
+<button id="connect">Authorize selected client</button><button id="disconnect">Forget token</button><button id="revoke">Revoke current grant</button>
+<small>Revoke deliberately removes the application grant and forgets this token. Google may revoke the grant across official clients; record the observed result.</small></fieldset>
+<fieldset><legend>2. Discovery and deliberate bootstrap</legend>
+<button id="roots">Full root scan</button>
+<label>Candidate or retained root ID <input id="rootId" autocomplete="off"></label>
+<button id="inspect">Inspect this explicit root</button>
+<button id="prepareRoot">Prepare a NEW disposable dataset intent</button>
+<label>Local creation intent <select id="rootIntent"></select></label>
+<button id="folders">Create/retry folders only</button><button id="descriptor">Publish/retry descriptor and verify</button>
+<small>Root IDs are never selected automatically, even when a scan returns one candidate. Preparing another intent may create another dataset. Concurrent intents remain separate candidates; there is no singleton election or global manifest.</small></fieldset>
+<fieldset><legend>3. Retained publication and pagination</legend>
+<p>Inspect a complete root first. Preparation stores generated Drive IDs, synthetic protocol identities and exact bytes before content publication.</p>
+<button id="prepareSegment">Prepare synthetic segment</button>
+<label>Retained synthetic publication <select id="publication"></select></label>
+<button id="lose">Create; discard accepted response</button><button id="retry">Retry same ID; verify exact bytes</button>
+<button id="startScan">Start full segment scan</button><button id="nextPage">Next page (page size 2)</button><button id="secondScan">Run later full scan</button><button id="badCursor">Probe deliberately invalid continuation</button>
+<small>Prepare/publish additional segments between page clicks to observe concurrent listing. Publish at least five to force pagination where Google honors page size. Short/empty pages continue when a token exists. Full scans are capped at 100 pages per click and never claim completeness after that cap.</small></fieldset>
+<fieldset><legend>4. Bounded reads</legend>
+<label>Explicit object ID (created by either client) <input id="readId" autocomplete="off"></label>
+<button id="read">Read metadata and at most 1 MiB</button><button id="interrupt">Read and intentionally cancel after first chunk</button>
+<small>Use a known client A object from client B for the cross-client read test. Use a nonexistent ID and an inaccessible fixture for ambiguity tests. No operation mutates or deletes remote objects. To test changed bytes, modify a separate disposable fixture through Drive and reread it; never modify a protocol segment.</small></fieldset>
+<details><summary>Local retained intents and evidence</summary><button id="refresh">Refresh retained intents</button><button id="export">Download local diagnostic evidence</button>
+<p>Downloaded evidence includes test account permission IDs, public client IDs, Drive IDs, checksum metadata and opaque page tokens. Keep it private and redact identifiers before sharing. It contains no token or session bytes. Intent bytes remain in the dedicated experimental IndexedDB database until you deliberately clear that site's storage. Remote proof files remain until you deliberately remove them in Drive.</p></details>
+<pre id="log" aria-label="Diagnostic events"></pre>
+<script type="module" src="./app.mjs"></script></body></html>
