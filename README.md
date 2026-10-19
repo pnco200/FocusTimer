@@ -72,6 +72,8 @@ The production repository uses IndexedDB schema **3** in the original `focus-tim
 
 No provider is installed or automatically scheduled by the application. Test-only adversarial/HTTP transports exercise two independent IndexedDB replicas, cancellation, response loss and document reload. See the [async orchestration report](docs/async-sync-orchestration.md) for the contract, native results, differences from the deterministic model and exact Drive proof questions.
 
+The [Google Drive feasibility report](docs/drive-feasibility-report.md) records current authoritative API research and the [isolated proof experiments](experiments/google-drive/README.md). Drive authorization across official clients and live provider behavior remain **unproven** pending project/client setup, interactive test-account consent and network access. These experiments are separate from the production application; no Drive adapter or sync UI is enabled.
+
 ## Core API
 
 Import from `src/protocol/index.js`. `parseSession`, `parseDescriptor`, `parseOperation` and `parseSegment` accept `Uint8Array` wire bytes. These are the untrusted-wire entry points. `validate*` functions validate already-constructed semantic objects and return independent snapshots; they cannot recover numeric token spelling or duplicate names erased by another JSON parser. Never place `JSON.parse` before a wire entry point.
